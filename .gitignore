@@ -1,0 +1,4 @@
+.DS_Store
+material/**/tmp/
+material/**/*-tmp/
+material/**/Codes/
