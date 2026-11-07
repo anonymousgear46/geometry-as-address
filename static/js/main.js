@@ -38,23 +38,245 @@
     }
   };
 
-  // Lazily attaches the source when a video approaches the viewport and pauses it when off-screen.
+  // Plays videos near the viewport, pauses them off-screen, and tells the loader what is visible.
+  const onScreen = new WeakSet();
   const visibilityObserver = new IntersectionObserver(
     (entries) => {
       for (const { target: video, isIntersecting } of entries) {
         if (isIntersecting) {
-          if (!video.getAttribute("src") && video.dataset.src) {
-            video.src = video.dataset.src;
+          onScreen.add(video);
+          if (video.getAttribute("src") && !video.dataset.userPaused) tryPlay(video);
+        } else {
+          onScreen.delete(video);
+          if (!video.paused) {
+            video.dataset.autoPaused = "1";
+            video.pause();
           }
-          if (!video.dataset.userPaused) tryPlay(video);
-        } else if (!video.paused) {
-          video.dataset.autoPaused = "1";
-          video.pause();
         }
       }
+      loader.schedule();
     },
     { rootMargin: "120px 0px", threshold: 0.15 }
   );
+
+  /* ---------- Video loader ---------- */
+
+  // Downloads videos one at a time so each finishes quickly instead of all of them sharing the
+  // bandwidth. Priority: videos the visitor asked for, then on-screen ones, then page order.
+  // A download pushed aside by a higher-priority one resumes later from where it stopped.
+  const loader = (() => {
+    const MAX_ACTIVE = 1;
+    const CAN_FETCH = /^https?:$/.test(location.protocol);
+    const entries = [];
+    const byVideo = new WeakMap();
+    const blobs = new Map();
+    let urgentSeq = 0;
+    let pumpQueued = false;
+
+    const mb = (bytes) => (bytes / 1048576).toFixed(1);
+    const rank = (e) => (e.urgent ? 0 : onScreen.has(e.video) ? 1 : 2);
+    const byPriority = (a, b) =>
+      rank(a) - rank(b) ||
+      b.urgent - a.urgent ||
+      (a.video.compareDocumentPosition(b.video) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+
+    function render(e) {
+      const { video, state } = e;
+      e.host.classList.toggle("is-ready", state === "ready");
+      e.overlay.dataset.state = state;
+      let frac = null;
+      if (e.total) frac = Math.min(1, e.received / e.total);
+      else if (e.native && video.duration > 0 && video.buffered.length) {
+        frac = Math.min(1, video.buffered.end(video.buffered.length - 1) / video.duration);
+      }
+      const indeterminate = state === "loading" && frac === null;
+      e.overlay.classList.toggle("is-indeterminate", indeterminate);
+      e.fill.style.transform = `scaleX(${frac || 0})`;
+      e.status.textContent = state === "failed" ? "Failed to load video" : state === "loading" ? "Loading video" : "Queued";
+      e.pct.textContent = state === "loading" && frac !== null ? `${Math.round(frac * 100)}%` : "";
+      e.size.textContent = e.total ? `${mb(e.received)} / ${mb(e.total)} MB` : e.received ? `${mb(e.received)} MB` : "";
+      if (frac === null) e.overlay.removeAttribute("aria-valuenow");
+      else e.overlay.setAttribute("aria-valuenow", String(Math.round(frac * 100)));
+    }
+
+    function attach(e, src) {
+      const { video } = e;
+      const wantsPlay = e.urgent || (onScreen.has(video) && !video.dataset.userPaused);
+      e.state = "ready";
+      e.urgent = 0;
+      video.preload = "auto";
+      video.src = src;
+      render(e);
+      if (wantsPlay) tryPlay(video);
+    }
+
+    // Fallback for file:// pages and failed fetches: let the browser stream the file itself.
+    function streamNatively(e) {
+      e.native = true;
+      e.total = e.received = 0;
+      e.chunks = [];
+      e.state = "loading";
+      e.video.preload = "auto";
+      e.video.src = e.url;
+      render(e);
+    }
+
+    async function start(e) {
+      e.state = "loading";
+      render(e);
+      if (!CAN_FETCH) return streamNatively(e);
+      const ctrl = (e.ctrl = new AbortController());
+      const url = e.url;
+      try {
+        const headers = e.received ? { Range: `bytes=${e.received}-` } : {};
+        const res = await fetch(url, { headers, signal: ctrl.signal });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        if (res.status === 206) {
+          e.total = Number((res.headers.get("content-range") || "").split("/")[1]) || 0;
+        } else {
+          e.chunks = [];
+          e.received = 0;
+          e.total = res.headers.get("content-encoding") ? 0 : Number(res.headers.get("content-length")) || 0;
+        }
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (ctrl.signal.aborted) return;
+          if (done) break;
+          e.chunks.push(value);
+          e.received += value.length;
+          render(e);
+        }
+        const blobUrl = URL.createObjectURL(new Blob(e.chunks, { type: res.headers.get("content-type") || "video/mp4" }));
+        blobs.set(url, blobUrl);
+        e.chunks = [];
+        attach(e, blobUrl);
+      } catch (err) {
+        if (!ctrl.signal.aborted) streamNatively(e);
+      } finally {
+        if (e.ctrl === ctrl) e.ctrl = null;
+        schedule();
+      }
+    }
+
+    function suspend(e) {
+      e.ctrl.abort();
+      e.ctrl = null;
+      e.state = "queued";
+      render(e);
+    }
+
+    function pump() {
+      const queued = entries.filter((e) => e.state === "queued").sort(byPriority);
+      for (const next of queued) {
+        const active = entries.filter((e) => e.state === "loading");
+        if (active.length < MAX_ACTIVE) {
+          start(next);
+          continue;
+        }
+        const victim = active
+          .filter((e) => e.ctrl && rank(e) > rank(next))
+          .sort(byPriority)
+          .pop();
+        if (!victim) break;
+        suspend(victim);
+        start(next);
+      }
+    }
+
+    function schedule() {
+      if (pumpQueued) return;
+      pumpQueued = true;
+      queueMicrotask(() => {
+        pumpQueued = false;
+        pump();
+      });
+    }
+
+    function add(video, host, url = video.dataset.src) {
+      const overlay = el("div", "vload", { role: "progressbar", "aria-label": "Video loading progress", "aria-valuemin": "0", "aria-valuemax": "100" });
+      const head = el("div", "vload-head");
+      const status = el("span", "vload-status");
+      const pct = el("span", "vload-pct");
+      head.append(status, pct);
+      const bar = el("div", "vload-bar");
+      const fill = el("span", "vload-fill");
+      bar.append(fill);
+      const size = el("span", "vload-size");
+      const panel = el("div", "vload-panel");
+      panel.append(head, bar, size);
+      overlay.append(panel);
+      host.append(overlay);
+
+      const e = { video, host, overlay, status, pct, fill, size, url: null, state: "idle", urgent: 0, chunks: [], received: 0, total: 0, native: false, ctrl: null };
+      entries.push(e);
+      byVideo.set(video, e);
+
+      video.addEventListener("loadeddata", () => {
+        if (!e.native || e.state !== "loading") return;
+        e.state = "ready";
+        render(e);
+        if (e.urgent || (onScreen.has(video) && !video.dataset.userPaused)) tryPlay(video);
+        e.urgent = 0;
+        schedule();
+      });
+      video.addEventListener("progress", () => {
+        if (e.native && e.state === "loading") render(e);
+      });
+      video.addEventListener("error", () => {
+        if (!video.getAttribute("src") || (e.state !== "ready" && e.state !== "loading")) return;
+        if (!e.native) {
+          blobs.delete(e.url);
+          streamNatively(e);
+        } else {
+          e.state = "failed";
+          render(e);
+          schedule();
+        }
+      });
+
+      render(e);
+      if (url) setSource(video, url);
+    }
+
+    // Points a registered video at a new file; `urgent` jumps the queue (the visitor asked for it).
+    function setSource(video, url, urgent = false) {
+      const e = byVideo.get(video);
+      if (e.url === url) return urgent ? prioritize(video) : undefined;
+      if (e.ctrl) e.ctrl.abort();
+      e.ctrl = null;
+      e.url = url;
+      e.chunks = [];
+      e.received = e.total = 0;
+      e.native = false;
+      e.urgent = urgent ? ++urgentSeq : 0;
+      if (!video.paused) {
+        video.dataset.autoPaused = "1";
+        video.pause();
+      }
+      const cached = blobs.get(url);
+      if (cached) {
+        attach(e, cached);
+      } else {
+        if (video.getAttribute("src")) {
+          video.removeAttribute("src");
+          video.load();
+        }
+        e.state = "queued";
+        render(e);
+      }
+      schedule();
+    }
+
+    function prioritize(video) {
+      const e = byVideo.get(video);
+      if (!e || (e.state !== "queued" && e.state !== "loading")) return;
+      e.urgent = ++urgentSeq;
+      schedule();
+    }
+
+    return { add, setSource, prioritize, schedule };
+  })();
 
   const trackUserPause = (video) => {
     video.addEventListener("pause", () => {
@@ -132,6 +354,7 @@
     video.muted = true;
 
     media.append(video, buildSpeedToggle(video, title, true), buildProgressBar(tile, video, item, title));
+    loader.add(video, media);
     visibilityObserver.observe(video);
 
     const caption = el("figcaption", "g-caption");
@@ -350,8 +573,8 @@
         video.pause();
         return;
       }
-      if (!video.getAttribute("src") && video.dataset.src) video.src = video.dataset.src;
-      tryPlay(video);
+      if (video.getAttribute("src")) tryPlay(video);
+      else loader.prioritize(video);
     });
 
     syncPlay();
@@ -391,7 +614,7 @@
     bar.append(title, nav);
 
     const mediaRow = el("div", `viewer-media${hasCamera ? " with-camera" : ""}`);
-    const videoWrap = el("div", "viewer-video is-loading");
+    const videoWrap = el("div", "viewer-video");
     const video = el("video", "", { controls: "", muted: "", loop: "", playsinline: "", preload: "none" });
     video.muted = true;
     videoWrap.append(video, el("span", "spinner", { "aria-hidden": "true" }));
@@ -404,7 +627,9 @@
     video.addEventListener("loadeddata", () => videoWrap.classList.remove("is-loading"));
     video.addEventListener("waiting", () => videoWrap.classList.add("is-loading"));
     video.addEventListener("playing", () => videoWrap.classList.remove("is-loading"));
+    video.addEventListener("emptied", () => videoWrap.classList.remove("is-loading"));
     trackUserPause(video);
+    loader.add(video, videoWrap);
 
     let cameraImg = null;
     let cameraLink = null;
@@ -421,7 +646,6 @@
     root.append(thumbs, viewer);
 
     let current = -1;
-    let activated = false;
 
     function select(i, userInitiated) {
       i = (i + items.length) % items.length;
@@ -434,15 +658,9 @@
       });
       title.textContent = labelOf(item);
       counter.textContent = `${String(i + 1).padStart(2, "0")} / ${String(items.length).padStart(2, "0")}`;
-      videoWrap.classList.add("is-loading");
       video.poster = item.thumb;
-      video.dataset.src = item.video;
       delete video.dataset.userPaused;
-      if (activated || userInitiated) {
-        activated = true;
-        video.src = item.video;
-        tryPlay(video);
-      }
+      loader.setSource(video, item.video, userInitiated);
       if (cameraImg) {
         cameraImg.src = item.camera;
         cameraLink.href = item.camera;
@@ -459,12 +677,6 @@
     });
 
     select(0, false);
-    new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) activated = true;
-      },
-      { rootMargin: "120px 0px" }
-    ).observe(videoWrap);
     visibilityObserver.observe(video);
   }
 
@@ -497,9 +709,9 @@
     });
 
     const playWithAudio = () => {
-      if (!video.getAttribute("src") && video.dataset.src) video.src = video.dataset.src;
       unmute();
-      tryPlay(video);
+      if (video.getAttribute("src")) tryPlay(video);
+      else loader.prioritize(video);
     };
     figure.querySelector(".narrated-overlay").addEventListener("click", playWithAudio);
     hint.addEventListener("click", () => (!video.paused && !video.muted ? video.pause() : playWithAudio()));
@@ -514,6 +726,7 @@
 
   function initLoopVideo(video) {
     trackUserPause(video);
+    loader.add(video, video.closest(".media-frame"));
     visibilityObserver.observe(video);
   }
 

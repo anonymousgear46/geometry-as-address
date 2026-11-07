@@ -231,6 +231,35 @@ h2::after { content: ""; position: absolute; bottom: 0; left: calc(50% - 20px); 
 .note { display: flex; align-items: flex-start; justify-content: center; gap: 8px; margin-top: 16px; font-size: 14.5px; font-style: italic; color: var(--muted); }
 .note svg { flex: none; width: 17px; height: 17px; margin-top: 3px; color: #c49a82; }
 
+/* ---------- Video loading overlay ---------- */
+.vload {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  color: #fff;
+  background: rgb(26 14 8 / 40%);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  transition: opacity 320ms ease, visibility 0s linear 0s;
+}
+.is-ready > .vload { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 320ms ease, visibility 0s linear 320ms; }
+.vload-panel { width: min(78%, 280px); font-size: 12.5px; font-weight: 700; line-height: 1.3; text-shadow: 0 1px 3px rgb(0 0 0 / 45%); }
+.vload-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 7px; font-variant-numeric: tabular-nums; }
+.vload-bar { position: relative; height: 5px; border-radius: 999px; overflow: hidden; background: rgb(255 255 255 / 28%); }
+.vload-fill { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(90deg, #f0b287, var(--accent)); transform-origin: left center; transform: scaleX(0); transition: transform 180ms linear; }
+.vload.is-indeterminate .vload-fill { right: auto; width: 35%; transform: none; transition: none; animation: vload-slide 1.2s ease-in-out infinite; }
+@keyframes vload-slide { from { translate: -100% 0; } to { translate: 290% 0; } }
+.vload-size { display: block; min-height: 1.3em; margin-top: 6px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; opacity: .82; }
+.vload[data-state="queued"] .vload-status { opacity: .85; }
+.vload[data-state="failed"] .vload-bar { display: none; }
+.media-frame .vload-panel, .viewer-video .vload-panel { width: min(60%, 360px); font-size: 14px; }
+.media-frame .vload-size, .viewer-video .vload-size { font-size: 12.5px; }
+.g-media:not(.is-ready) .g-progress,
+.media-frame:not(.is-ready) .narrated-overlay { display: none; }
+
 /* ---------- Gallery ---------- */
 .gallery { display: flex; flex-direction: column; gap: 18px; margin-top: 30px; }
 .g-row { --cols: 3; display: flex; gap: 16px; align-items: stretch; justify-content: center; }

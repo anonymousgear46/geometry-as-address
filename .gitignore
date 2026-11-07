@@ -2,3 +2,4 @@
 material/**/tmp/
 material/**/*-tmp/
 material/**/Codes/
+*.md
