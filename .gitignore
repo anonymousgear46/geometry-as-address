@@ -3,3 +3,5 @@ material/**/tmp/
 material/**/*-tmp/
 material/**/Codes/
 *.md
+demo_video
+agent_readme/*

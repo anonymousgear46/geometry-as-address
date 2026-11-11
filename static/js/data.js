@@ -95,7 +95,10 @@ window.PAGE_DATA = (() => {
   }));
 
   const worldScoreDir = "material/Comparison_WorldScore";
-  const worldScore = [2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 16, 19, 28, 29, 30, 31, 32, 33, 35, 36, 37, 40].map((n, i) => {
+  const worldScore = [
+    2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 16, 19, 28, 29, 30, 31, 32, 33,
+    35, 36, 37, 40, 41, 42, 43, 44, 45, 46, 48, 49, 50, 51, 52, 53, 57, 68,
+  ].map((n, i) => {
     const name = `case_${String(n).padStart(2, "0")}`;
     return {
       name,
