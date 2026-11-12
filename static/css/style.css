@@ -461,7 +461,8 @@ h2::after { content: ""; position: absolute; bottom: 0; left: calc(50% - 20px); 
 
 /* ---------- Dynamic scenes ---------- */
 .dyn-figure { max-width: none; margin-top: 40px; }
-.dyn-title { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 20px; font-weight: 800; line-height: 1.3; color: var(--accent-dark); }
+.dyn-title { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; font-size: 20px; font-weight: 800; line-height: 1.3; color: var(--accent-dark); }
+.dyn-title--sub { font-size: 17px; }
 .dyn-tag { padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; color: #fff; background: var(--title-gradient); }
 .dyn-legend { text-align: center; }
 .dyn-settings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; font-size: 14.5px; line-height: 1.5; }
@@ -473,6 +474,19 @@ h2::after { content: ""; position: absolute; bottom: 0; left: calc(50% - 20px); 
 @media (max-width: 480px) {
   .dyn-settings { grid-template-columns: 1fr; }
 }
+
+/* ---------- Rebuttal ---------- */
+.rb-index { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 22px; }
+.rb-index a { padding: 6px 16px; border: 1px solid #efd3c1; border-radius: 999px; font-size: 15px; font-weight: 700; text-decoration: none; color: var(--accent-dark); background: #fff; transition: background 160ms ease, border-color 160ms ease; }
+.rb-index a:hover { border-color: var(--accent); background: var(--accent-soft); }
+.rb-reviewer { margin-top: 64px; scroll-margin-top: calc(var(--nav-h) + 16px); }
+.rb-reviewer-title { display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; line-height: 1.3; color: var(--accent-dark); }
+.rb-reviewer-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.rb-id { padding: 2px 12px; border-radius: 999px; font-size: 18px; letter-spacing: .01em; color: #fff; background: var(--title-gradient); }
+.rb-module { margin-top: 40px; }
+.rb-reviewer .dyn-figure[id], .rb-module { scroll-margin-top: calc(var(--nav-h) + 16px); }
+.rb-module-intro { color: #5d5753; text-wrap: pretty; }
+.rb-module-intro + .dyn-figure { margin-top: 28px; }
 
 /* ---------- Comparison viewers ---------- */
 .thumbs {
